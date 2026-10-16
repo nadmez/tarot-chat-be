@@ -1,0 +1,16 @@
+{
+   "server": {
+      "listening": "Server listening at http://localhost:{{port}}",
+      "helloMessage": "Hello from the server!",
+      "errors": {
+         "invalidPrompt": "Invalid request: {{message}}",
+         "emptyPrompt": "Prompt cannot be empty",
+         "promptTooLong": "Prompt is too long (max 1000 characters)",
+         "failedResponse": "Failed to generate a response"
+      },
+      "validation": {
+         "promptRequired": "Prompt is required",
+         "conversationIdRequired": "Conversation ID is required"
+      }
+   }
+}
