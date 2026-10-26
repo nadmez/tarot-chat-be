@@ -12,10 +12,16 @@ import { createApp } from '../../app.js';
 
 const app = createApp();
 
+const READING = {
+   opening: 'Welcome, dear friend.',
+   card_readings: ['First card text.', 'Second card text.', 'Third card text.'],
+   closing: 'Trust your path.',
+};
+
 /** @param {string} [id] */
 const openaiReply = (id = 'resp_1') => ({
    id,
-   output_text: 'The cards say hello',
+   output_text: JSON.stringify(READING),
 });
 
 /**
@@ -39,7 +45,16 @@ describe('POST /api/chat', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(res.body.message).toBe('The cards say hello');
+      const [c1, c2, c3] = res.body.cards;
+      expect(res.body.message).toBe(
+         [
+            'Welcome, dear friend.',
+            `**1. ${c1.name}**\nFirst card text.`,
+            `**2. ${c2.name}**\nSecond card text.`,
+            `**3. ${c3.name}**\nThird card text.`,
+            'Trust your path.',
+         ].join('\n\n')
+      );
       expect(res.body.id).toBe('resp_1');
       expect(res.body.cards).toHaveLength(3);
       expect(create).toHaveBeenCalledWith(
@@ -69,6 +84,82 @@ describe('POST /api/chat', () => {
       for (const card of res.body.cards) {
          expect(instructions).toContain(card.name);
       }
+   });
+
+   it('lists the drawn cards as numbered slots in the instructions', async () => {
+      create.mockResolvedValue(openaiReply());
+
+      const res = await postChat({ prompt: 'Hi', conversationId: randomUUID() });
+
+      const { instructions } = create.mock.calls[0][0];
+      res.body.cards.forEach((/** @type {{ name: string }} */ card, /** @type {number} */ i) => {
+         expect(instructions).toContain(`Card ${i + 1}: ${card.name}`);
+      });
+   });
+
+   it('asks for a strict JSON reading with one array item per drawn card', async () => {
+      create.mockResolvedValue(openaiReply());
+
+      const res = await postChat({ prompt: 'Hi', conversationId: randomUUID() });
+
+      const { text } = create.mock.calls[0][0];
+      const count = res.body.cards.length;
+      expect(text.format).toMatchObject({
+         type: 'json_schema',
+         strict: true,
+         schema: {
+            type: 'object',
+            properties: {
+               card_readings: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  minItems: count,
+                  maxItems: count,
+               },
+            },
+            required: ['opening', 'card_readings', 'closing'],
+            additionalProperties: false,
+         },
+      });
+   });
+
+   it('takes card names only from the drawn cards, never from the model', async () => {
+      create.mockResolvedValue({
+         id: 'resp_1',
+         output_text: JSON.stringify({
+            ...READING,
+            card_readings: ['Text.', 'Text.', 'Text.'],
+         }),
+      });
+
+      const res = await postChat({ prompt: 'Hi', conversationId: randomUUID() });
+
+      const headings = res.body.message.match(/\*\*\d\. (.+?)\*\*/g);
+      expect(headings).toEqual(
+         res.body.cards.map(
+            (/** @type {{ name: string }} */ card, /** @type {number} */ i) =>
+               `**${i + 1}. ${card.name}**`
+         )
+      );
+   });
+
+   it('answers 500 when the model output is not a valid reading', async () => {
+      create.mockResolvedValue({ id: 'resp_1', output_text: 'not json' });
+
+      const res = await postChat({ prompt: 'Hi', conversationId: randomUUID() });
+
+      expect(res.status).toBe(500);
+   });
+
+   it('answers 500 when the model returns a different number of readings than cards', async () => {
+      create.mockResolvedValue({
+         id: 'resp_1',
+         output_text: JSON.stringify({ ...READING, card_readings: ['Only one.'] }),
+      });
+
+      const res = await postChat({ prompt: 'Hi', conversationId: randomUUID() });
+
+      expect(res.status).toBe(500);
    });
 
    it('chains follow-ups of the same conversation via previous_response_id', async () => {

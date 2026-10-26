@@ -19,6 +19,64 @@ const template = readFileSync(join(import.meta.dirname, "tarot.txt"), "utf-8");
 
 const model_temperature = 0.5;
 
+const CARD_COUNT = 3;
+
+// The model writes one text per card but never the card names; the server
+// adds the names, so the reply always matches the drawn cards.
+/** @param {number} count */
+function buildReadingFormat(count) {
+  return {
+    type: /** @type {const} */ ("json_schema"),
+    name: "tarot_reading",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        opening: { type: "string" },
+        card_readings: {
+          type: "array",
+          items: { type: "string" },
+          minItems: count,
+          maxItems: count,
+        },
+        closing: { type: "string" },
+      },
+      required: ["opening", "card_readings", "closing"],
+      additionalProperties: false,
+    },
+  };
+}
+
+/** @param {number} count */
+function buildReadingSchema(count) {
+  return z.object({
+    opening: z.string(),
+    card_readings: z.array(z.string()).length(count),
+    closing: z.string(),
+  });
+}
+
+/** @param {TarotCard[]} cards */
+function formatCardInfo(cards) {
+  return cards
+    .map((card, i) => `Card ${i + 1}: ${card.name}\nMeaning: ${card.meaning_up}`)
+    .join("\n\n");
+}
+
+/**
+ * @param {{ opening: string, card_readings: string[], closing: string }} reading
+ * @param {TarotCard[]} cards
+ */
+function formatReading(reading, cards) {
+  return [
+    reading.opening,
+    ...cards.map(
+      (card, i) => `**${i + 1}. ${card.name}**\n${reading.card_readings[i]}`
+    ),
+    reading.closing,
+  ].join("\n\n");
+}
+
 /**
  * Built per request so the messages use the request's language.
  * @param {(key: string) => string} translate
@@ -40,12 +98,13 @@ function buildChatSchema(translate) {
  * @returns {Promise<ChatResponse>}
  */
 export async function sendMessage(prompt, conversationId) {
-  // Draw 3 random cards and format them as JSON for the prompt
-  const cards = getRandomCards(3);
-  const cardInfo = JSON.stringify(cards, null, 2);
+  // Draw the cards and list them as numbered slots for the prompt
+  const cards = getRandomCards(CARD_COUNT);
+  const cardInfo = formatCardInfo(cards);
 
   const instructions = template
     .replace("{{cardInfo}}", cardInfo)
+    .replaceAll("{{cardCount}}", String(cards.length))
     .replace("{{today}}", new Date().toDateString());
 
   const response = await getOpenAI().responses.create({
@@ -54,12 +113,18 @@ export async function sendMessage(prompt, conversationId) {
     instructions,
     temperature: model_temperature,
     previous_response_id: getLastConversationId(conversationId),
+    text: { format: buildReadingFormat(cards.length) },
   });
+
+  // Throws (-> 500) when the output is not a valid reading
+  const reading = buildReadingSchema(cards.length).parse(
+    JSON.parse(response.output_text)
+  );
 
   setLastConversationId(conversationId, response.id);
 
   return {
-    message: response.output_text,
+    message: formatReading(reading, cards),
     id: response.id,
     cards,
   };
