@@ -46,7 +46,7 @@ describe('POST /api/chat', () => {
          expect.objectContaining({
             model: 'gpt-4o-mini',
             input: 'Will I travel?',
-            temperature: 0.8,
+            temperature: 0.5,
             previous_response_id: undefined,
          })
       );
